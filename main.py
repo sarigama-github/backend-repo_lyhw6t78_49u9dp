@@ -1,6 +1,10 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, EmailStr
+from typing import Optional
+
+from database import create_document
 
 app = FastAPI()
 
@@ -12,57 +16,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+class ContactMessage(BaseModel):
+    name: str
+    email: EmailStr
+    message: str
+    source: Optional[str] = "portfolio"
+
+
 @app.get("/")
 def read_root():
-    return {"message": "Hello from FastAPI Backend!"}
+    return {"message": "Portfolio API running"}
 
-@app.get("/api/hello")
-def hello():
-    return {"message": "Hello from the backend API!"}
+
+@app.post("/contact")
+async def contact(message: ContactMessage):
+    try:
+        # Persist message to database (collection name inferred: "contactmessage" -> use explicit)
+        doc = message.model_dump()
+        await create_document("contact", doc)
+        return {"status": "ok"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/test")
-def test_database():
-    """Test endpoint to check if database is available and accessible"""
-    response = {
-        "backend": "✅ Running",
-        "database": "❌ Not Available",
-        "database_url": None,
-        "database_name": None,
-        "connection_status": "Not Connected",
-        "collections": []
-    }
-    
+async def test_database():
+    """Quick connectivity check"""
+    info = {"backend": "running"}
     try:
-        # Try to import database module
-        from database import db
-        
-        if db is not None:
-            response["database"] = "✅ Available"
-            response["database_url"] = "✅ Configured"
-            response["database_name"] = db.name if hasattr(db, 'name') else "✅ Connected"
-            response["connection_status"] = "Connected"
-            
-            # Try to list collections to verify connectivity
-            try:
-                collections = db.list_collection_names()
-                response["collections"] = collections[:10]  # Show first 10 collections
-                response["database"] = "✅ Connected & Working"
-            except Exception as e:
-                response["database"] = f"⚠️  Connected but Error: {str(e)[:50]}"
-        else:
-            response["database"] = "⚠️  Available but not initialized"
-            
-    except ImportError:
-        response["database"] = "❌ Database module not found (run enable-database first)"
+        # Try writing a tiny heartbeat doc (won't fail if DB not configured; helper handles it)
+        await create_document("heartbeat", {"ok": True})
+        info["database"] = "ok"
     except Exception as e:
-        response["database"] = f"❌ Error: {str(e)[:50]}"
-    
-    # Check environment variables
-    import os
-    response["database_url"] = "✅ Set" if os.getenv("DATABASE_URL") else "❌ Not Set"
-    response["database_name"] = "✅ Set" if os.getenv("DATABASE_NAME") else "❌ Not Set"
-    
-    return response
+        info["database"] = f"error: {str(e)[:120]}"
+    return info
 
 
 if __name__ == "__main__":
